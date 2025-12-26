@@ -1,0 +1,227 @@
+import customtkinter as ctk
+import psutil
+import tkinter as tk
+from tkinter import messagebox
+
+
+
+class Dashboard(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+
+        self.title("Real-Time Process Monitoring Dashboard")
+        self.geometry("1300x750")
+
+        # GLOBAL list of scheduled jobs
+        self.scheduled_jobs = []
+
+        # -------- Sidebar --------
+        self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=10)
+        self.sidebar.pack(side="left", fill="y", padx=10, pady=10)
+
+        title = ctk.CTkLabel(self.sidebar, text="SYSTEM DASHBOARD",
+                             font=("Arial", 22, "bold"))
+        title.pack(pady=20)
+
+        self.btn_dashboard = ctk.CTkButton(
+            self.sidebar, text="Dashboard", command=self.show_dashboard)
+        self.btn_dashboard.pack(pady=10, fill="x")
+
+        self.btn_process = ctk.CTkButton(
+            self.sidebar, text="Processes", command=self.show_process_manager)
+        self.btn_process.pack(pady=10, fill="x")
+
+        self.btn_settings = ctk.CTkButton(
+            self.sidebar, text="Settings", command=self.show_settings)
+        self.btn_settings.pack(pady=10, fill="x")
+
+        
+        self.main_frame = ctk.CTkFrame(self, corner_radius=15)
+        self.main_frame.pack(side="right", expand=True, fill="both", padx=10, pady=10)
+
+        self.active_frame = None
+        self.show_dashboard()
+
+    def cancel_all_updates(self):
+        """Cancel every scheduled after() callback."""
+        for job in self.scheduled_jobs:
+            try:
+                self.after_cancel(job)
+            except:
+                pass
+        self.scheduled_jobs.clear()
+
+    def clear_frame(self):
+        self.cancel_all_updates()  # ← IMPORTANT FIX
+
+        if self.active_frame:
+            try:
+                self.active_frame.destroy()
+            except:
+                pass
+
+
+    def show_dashboard(self):
+        self.clear_frame()
+        self.active_frame = DashboardFrame(self.main_frame, self)
+        self.active_frame.pack(fill="both", expand=True)
+
+    def show_process_manager(self):
+        self.clear_frame()
+        self.active_frame = ProcessManagerFrame(self.main_frame)
+        self.active_frame.pack(fill="both", expand=True)
+
+    def show_settings(self):
+        self.clear_frame()
+        self.active_frame = SettingsFrame(self.main_frame)
+        self.active_frame.pack(fill="both", expand=True)
+
+
+
+class DashboardFrame(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, corner_radius=15)
+        self.app = app  # ROOT APP for safe scheduling
+
+        title = ctk.CTkLabel(self, text="System Overview", font=("Arial", 30, "bold"))
+        title.pack(pady=20)
+
+        # CPU widgets
+        self.cpu_label = ctk.CTkLabel(self, text="CPU: 0%", font=("Arial", 20))
+        self.cpu_label.pack(pady=5)
+
+        self.cpu_bar = ctk.CTkProgressBar(self, width=600)
+        self.cpu_bar.pack(pady=10)
+        self.cpu_bar.set(0)
+
+        # RAM widgets
+        self.ram_label = ctk.CTkLabel(self, text="RAM: 0%", font=("Arial", 20))
+        self.ram_label.pack(pady=5)
+
+        self.ram_bar = ctk.CTkProgressBar(self, width=600, progress_color="purple")
+        self.ram_bar.pack(pady=10)
+        self.ram_bar.set(0)
+
+        # Network
+        self.net_label = ctk.CTkLabel(self, text="Network: 0 KB/s", font=("Arial", 20))
+        self.net_label.pack(pady=10)
+
+        # Disk
+        self.disk_label = ctk.CTkLabel(self, text="Disk: 0%", font=("Arial", 20))
+        self.disk_label.pack(pady=5)
+
+        self.disk_bar = ctk.CTkProgressBar(self, width=600, progress_color="green")
+        self.disk_bar.pack(pady=10)
+        self.disk_bar.set(0)
+
+        self.last_net = psutil.net_io_counters().bytes_recv
+
+        # Start periodic updates
+        self.schedule_update()
+
+    def schedule_update(self):
+        """Schedule next UI update safely."""
+        job = self.app.after(1000, self.update_stats)
+        self.app.scheduled_jobs.append(job)
+
+    def update_stats(self):
+        """Safe UI updates."""
+        cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory().percent
+        disk = psutil.disk_usage('/').percent
+
+        # Update UI
+        self.cpu_label.configure(text=f"CPU: {cpu}%")
+        self.cpu_bar.set(cpu / 100)
+
+        self.ram_label.configure(text=f"RAM: {ram}%")
+        self.ram_bar.set(ram / 100)
+
+        self.disk_label.configure(text=f"Disk: {disk}%")
+        self.disk_bar.set(disk / 100)
+
+        # Network speed
+        now_net = psutil.net_io_counters().bytes_recv
+        speed = (now_net - self.last_net) / 1024
+        self.last_net = now_net
+        self.net_label.configure(text=f"Network: {speed:.1f} KB/s")
+
+        # schedule next update
+        self.schedule_update()
+
+
+
+class ProcessManagerFrame(ctk.CTkFrame):
+    def __init__(self, parent):
+        super().__init__(parent, corner_radius=15)
+
+        title = ctk.CTkLabel(self, text="Process Manager", font=("Arial", 28, "bold"))
+        title.pack(pady=15)
+
+        # Search
+        self.search = ctk.CTkEntry(self, placeholder_text="Search process...")
+        self.search.pack(pady=10)
+        self.search.bind("<KeyRelease>", lambda e: self.load_processes())
+
+        self.table = tk.Listbox(self, width=80, height=20, bg="#202020", fg="white")
+        self.table.pack(pady=10)
+
+        # Buttons
+        btns = ctk.CTkFrame(self)
+        btns.pack(pady=10)
+
+        ctk.CTkButton(btns, text="Refresh", command=self.load_processes).pack(side="left", padx=10)
+        ctk.CTkButton(btns, text="Kill", fg_color="red", command=self.kill_process).pack(side="left", padx=10)
+
+        self.load_processes()
+
+    def load_processes(self):
+        self.table.delete(0, tk.END)
+        text = self.search.get().lower()
+
+        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent']):
+            try:
+                if text in proc.info['name'].lower():
+                    self.table.insert(
+                        tk.END,
+                        f"{proc.info['pid']}   {proc.info['name']}   CPU: {proc.info['cpu_percent']}%"
+                    )
+            except:
+                pass
+
+    def kill_process(self):
+        try:
+            item = self.table.get(tk.ANCHOR)
+            pid = int(item.split()[0])
+            psutil.Process(pid).terminate()
+            messagebox.showinfo("Success", f"Process {pid} terminated.")
+            self.load_processes()
+        except:
+            messagebox.showerror("Error", "Could not kill process.")
+
+
+
+class SettingsFrame(ctk.CTkFrame):
+    def __init__(self, parent):
+        super().__init__(parent, corner_radius=15)
+
+        title = ctk.CTkLabel(self, text="Settings", font=("Arial", 28, "bold"))
+        title.pack(pady=20)
+
+        ctk.CTkLabel(self, text="Appearance Mode", font=("Arial", 18)).pack(pady=10)
+
+        self.mode = ctk.CTkOptionMenu(self, values=["Light", "Dark", "System"],
+                                      command=self.change_mode)
+        self.mode.pack(pady=10)
+
+    def change_mode(self, mode):
+        ctk.set_appearance_mode(mode)
+
+
+
+if __name__ == "__main__":
+    app = Dashboard()
+    app.mainloop()
